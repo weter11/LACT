@@ -1076,30 +1076,8 @@ pub(crate) static NVML: LazyLock<Option<NvidiaLibs>> = LazyLock::new(|| None);
 pub(crate) static NVML: LazyLock<Option<NvidiaLibs>> =
     LazyLock::new(|| match unsafe { Nvml::init() } {
         Ok(nvml) => {
-            use crate::server::gpu_controller::NvApi;
-
-            // The config has to be re-read here, because a LazyLock cannot capture external variables into the init closure
-            let disable_nvapi = Config::load()
-                .ok()
-                .flatten()
-                .and_then(|config| config.daemon.disable_nvapi);
-
             info!("Nvidia management library loaded");
-            let nvapi = if disable_nvapi == Some(true) {
-                info!("NvAPI support is disabled");
-                None
-            } else {
-                NvApi::new()
-                    .inspect(|_| {
-                        info!("NvAPI library loaded");
-                    })
-                    .inspect_err(|err| {
-                        warn!("could not load NvAPI library: {err:#}");
-                    })
-                    .ok()
-            };
-
-            Some((Arc::new(nvml), Arc::new(nvapi)))
+            Some(Arc::new(nvml))
         }
         Err(err) => {
             error!("could not load Nvidia management library: {err}");

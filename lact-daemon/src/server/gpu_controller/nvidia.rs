@@ -1,14 +1,10 @@
 mod driver;
-pub mod nvapi;
 
 use super::{CommonControllerInfo, FanControlHandle, GpuController};
-use crate::{
-    bindings::nvidia::NvPhysicalGpuHandle,
-    server::{
-        gpu_controller::{common::fan_control::FanCurveExt, common::resolve_process_name, NvApi},
-        opencl::get_opencl_info,
-        vulkan::get_vulkan_info,
-    },
+use crate::server::{
+    gpu_controller::{common::fan_control::FanCurveExt, common::resolve_process_name},
+    opencl::get_opencl_info,
+    vulkan::get_vulkan_info,
 };
 use amdgpu_sysfs::{gpu_handle::power_profile_mode::PowerProfileModesTable, hw_mon::Temperature};
 use anyhow::{anyhow, bail, Context};
@@ -50,13 +46,13 @@ const SUPPORTED_UTIL_TYPES: &[ProcessUtilizationType] = &[
 
 pub struct NvidiaGpuController {
     nvml: &'static Nvml,
-    nvapi: Option<&'static NvApi>,
     common: CommonControllerInfo,
     fan_control_handle: RefCell<Option<FanControlHandle>>,
 
     driver_handle: Option<DriverHandle>,
-    nvapi_handle: Option<NvPhysicalGpuHandle>,
-    nvapi_thermals_mask: Option<i32>,
+
+    hotspot_sensor_id: Option<u32>,
+    vram_sensor_id: Option<u32>,
 
     last_util_timestamp: Cell<Option<u64>>,
     // Store last applied offsets as a workaround when the driver doesn't tell us the current offset
@@ -69,7 +65,6 @@ impl NvidiaGpuController {
     pub fn new(
         common: CommonControllerInfo,
         nvml: &'static Nvml,
-        nvapi: Option<&'static NvApi>,
     ) -> anyhow::Result<Self> {
         let device = nvml
             .device_by_pci_bus_id(common.pci_slot_name.as_str())
@@ -79,33 +74,6 @@ impl NvidiaGpuController {
                     common.pci_slot_name
                 )
             })?;
-
-        let (nvapi_handle, nvapi_thermals_mask) = match nvapi.as_ref() {
-            Some(nvapi) => {
-                let bus_id = common.get_slot_info()?.bus;
-                let gpu_handle = nvapi
-                    .find_matching_gpu(u32::from(bus_id))
-                    .inspect_err(|err| error!("Could not get NvAPI GPU handle: {err}"))
-                    .ok()
-                    .flatten();
-
-                let thermals_mask = gpu_handle.and_then(|handle| unsafe {
-                    nvapi
-                        .calculate_thermals_mask(handle)
-                        .inspect(|mask| {
-                            debug!("calculated NvAPI thermals mask {mask:x}");
-                        })
-                        .inspect_err(|err| {
-                            error!("could not calculate NvAPI thermal mask: {err:#}");
-                        })
-                        .ok()
-                });
-
-                (gpu_handle, thermals_mask)
-            }
-            None => (None, None),
-        };
-        debug!("initialized NvAPI device handle {nvapi_handle:?}");
 
         let minor_number = device.minor_number()?;
 
@@ -120,13 +88,41 @@ impl NvidiaGpuController {
             }
         };
 
+        let (hotspot_sensor_id, vram_sensor_id) = match driver_handle.as_ref() {
+            Some(handle) => match handle.get_thermal_sensors_info() {
+                Ok(sensors) => {
+                    let mut hotspot = None;
+                    let mut vram = None;
+
+                    let mut gpu_sensor_count = 0;
+                    for (id, sensor_type) in sensors {
+                        if sensor_type == driver::NV2080_CTRL_THERMAL_SENSOR_TYPE_GPU {
+                            gpu_sensor_count += 1;
+                            if gpu_sensor_count == 2 || id == 9 {
+                                hotspot = Some(id);
+                            }
+                        } else if sensor_type == driver::NV2080_CTRL_THERMAL_SENSOR_TYPE_MEMORY
+                            || id == 15
+                        {
+                            vram = Some(id);
+                        }
+                    }
+                    (hotspot, vram)
+                }
+                Err(err) => {
+                    error!("could not get thermal sensors info: {err:#}");
+                    (None, None)
+                }
+            },
+            None => (None, None),
+        };
+
         Ok(Self {
             nvml,
-            nvapi,
             common,
             driver_handle,
-            nvapi_handle,
-            nvapi_thermals_mask,
+            hotspot_sensor_id,
+            vram_sensor_id,
             last_util_timestamp: Cell::new(None),
             fan_control_handle: RefCell::new(None),
             last_applied_offsets: RefCell::new(HashMap::new()),
@@ -497,18 +493,32 @@ impl GpuController for NvidiaGpuController {
             );
         }
 
-        let mut voltage = None;
+        let voltage = None;
 
-        if let (Some(nvapi), Some(handle)) = (self.nvapi.as_ref(), self.nvapi_handle.as_ref()) {
-            unsafe {
-                if let Some(mask) = self.nvapi_thermals_mask {
-                    if let Ok(thermals) = nvapi.get_thermals(*handle, mask) {
-                        if let Some(hotspot) = thermals.hotspot() {
+        if let Some(driver_handle) = self.driver_handle.as_ref() {
+            let mut mask = 0;
+            if let Some(id) = self.hotspot_sensor_id {
+                mask |= 1 << id;
+            }
+            if let Some(id) = self.vram_sensor_id {
+                mask |= 1 << id;
+            }
+
+            if mask != 0 {
+                if let Ok(temperatures) = driver_handle.get_temperatures(mask) {
+                    for (id, value) in temperatures {
+                        #[allow(clippy::cast_precision_loss)]
+                        let temp = (value / 256) as f32;
+                        if temp <= 0.0 || temp >= 255.0 {
+                            continue;
+                        }
+
+                        if Some(id) == self.hotspot_sensor_id {
                             temps.insert(
                                 "GPU Hotspot".to_owned(),
                                 TemperatureEntry {
                                     value: Temperature {
-                                        current: Some(hotspot as f32),
+                                        current: Some(temp),
                                         crit: None,
                                         crit_hyst: None,
                                     },
@@ -516,13 +526,12 @@ impl GpuController for NvidiaGpuController {
                                 },
                             );
                         }
-
-                        if let Some(vram) = thermals.vram() {
+                        if Some(id) == self.vram_sensor_id {
                             temps.insert(
                                 "VRAM".to_owned(),
                                 TemperatureEntry {
                                     value: Temperature {
-                                        current: Some(vram as f32),
+                                        current: Some(temp),
                                         crit: None,
                                         crit_hyst: None,
                                     },
@@ -531,10 +540,6 @@ impl GpuController for NvidiaGpuController {
                             );
                         }
                     }
-                }
-
-                if let Ok(value) = nvapi.get_voltage(*handle) {
-                    voltage = Some(u64::from(value) / 1000);
                 }
             }
         }
