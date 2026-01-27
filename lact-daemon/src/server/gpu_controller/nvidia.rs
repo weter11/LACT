@@ -493,7 +493,7 @@ impl GpuController for NvidiaGpuController {
             );
         }
 
-        let voltage = None;
+        let mut voltage = None;
 
         if let Some(driver_handle) = self.driver_handle.as_ref() {
             let mut mask = 0;
@@ -541,6 +541,10 @@ impl GpuController for NvidiaGpuController {
                         }
                     }
                 }
+            }
+
+            if let Ok(value) = driver_handle.get_voltage(driver::NV2080_CTRL_VOLT_DOMAIN_CORE) {
+                voltage = Some(u64::from(value) / 1000);
             }
         }
 
