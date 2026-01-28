@@ -35,7 +35,7 @@ typedef NvAPI_Status (*NvAPI_GetErrorMessageFn)(NvAPI_Status status,
 typedef struct NvApiThermals {
     NvU32 version;
     NvS32 mask;
-    /* NvAPI thermals values: hotspot index 9, VRAM index 15. */
+    /* NvAPI thermal values: hotspot index 9, VRAM index 15. */
     NvS32 values[NVAPI_THERMALS_VALUE_COUNT];
 } NvApiThermals;
 
@@ -108,6 +108,7 @@ static int read_temp_value(const NvApiThermals *thermals, size_t index, int *out
     }
 
     raw_value = thermals->values[index] / 256;
+    /* NvAPI encodes thermals into an 8-bit range of 1..254. */
     if (raw_value <= 0 || raw_value >= 255) {
         return 0;
     }
