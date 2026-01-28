@@ -281,6 +281,24 @@ mod tests {
         let thermals = build_thermals(&[(7, 65 * 256), (2, 60 * 256)]);
         assert_eq!(thermals.vram(), Some(65));
     }
+
+    #[test]
+    fn vram_falls_back_to_tertiary_index() {
+        let thermals = build_thermals(&[(2, 55 * 256)]);
+        assert_eq!(thermals.vram(), Some(55));
+    }
+
+    #[test]
+    fn hotspot_returns_none_when_missing() {
+        let thermals = build_thermals(&[]);
+        assert_eq!(thermals.hotspot(), None);
+    }
+
+    #[test]
+    fn vram_returns_none_when_missing() {
+        let thermals = build_thermals(&[]);
+        assert_eq!(thermals.vram(), None);
+    }
 }
 
 #[repr(C)]
