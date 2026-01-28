@@ -10,7 +10,7 @@ use std::{
     ptr,
 };
 
-const LIBARY_NAME: &str = "libnvidia-api.so.1";
+const LIBRARY_NAME: &str = "libnvidia-api.so.1";
 const QUERY_INTERFACE_FN: &[u8] = b"nvapi_QueryInterface\0";
 
 const QUERY_NVAPI_INITIALIZE: u32 = 0x0150e828;
@@ -28,7 +28,7 @@ pub struct NvApi {
 impl NvApi {
     pub fn new() -> anyhow::Result<Self> {
         let lib = unsafe {
-            libloading::Library::new(LIBARY_NAME).context("Could not load nvidia API library")
+            libloading::Library::new(LIBRARY_NAME).context("Could not load nvidia API library")
         }?;
 
         let handle = Self { lib };
@@ -38,8 +38,6 @@ impl NvApi {
             let initialize: unsafe extern "C" fn() -> NvAPI_Status = transmute(initialize);
             let status = initialize();
             handle.handle_status(status)?;
-
-            handle.enum_physical_gpus().unwrap();
         }
 
         Ok(handle)
@@ -130,9 +128,6 @@ impl NvApi {
             values: [0; 40],
         };
 
-        let initial_status = f(handle, &mut sensors);
-        self.handle_status(initial_status)?;
-
         for bit in 0..32 {
             sensors.mask = 1 << bit;
             let status = f(handle, &mut sensors);
@@ -206,9 +201,10 @@ impl NvApi {
 impl Drop for NvApi {
     fn drop(&mut self) {
         unsafe {
-            let unload = self.query_interface(QUERY_NVAPI_UNLOAD).unwrap();
-            let unload: unsafe extern "C" fn() -> NvAPI_Status = transmute(unload);
-            unload();
+            if let Ok(unload) = self.query_interface(QUERY_NVAPI_UNLOAD) {
+                let unload: unsafe extern "C" fn() -> NvAPI_Status = transmute(unload);
+                unload();
+            }
         }
     }
 }
