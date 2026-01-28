@@ -229,12 +229,45 @@ impl NvApiThermals {
             .filter(|&value| value > 0 && value < 255)
     }
 
+    fn find_value(&self, indices: &[usize]) -> Option<i32> {
+        indices.iter().find_map(|&index| self.get_value(index))
+    }
+
     pub fn hotspot(&self) -> Option<i32> {
-        self.get_value(9)
+        self.find_value(&[9, 1])
     }
 
     pub fn vram(&self) -> Option<i32> {
-        self.get_value(15)
+        self.find_value(&[15, 7, 2])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NvApiThermals;
+
+    fn build_thermals(values: &[(usize, i32)]) -> NvApiThermals {
+        let mut data = NvApiThermals {
+            version: 0,
+            mask: 0,
+            values: [0; 40],
+        };
+        for &(index, value) in values {
+            data.values[index] = value;
+        }
+        data
+    }
+
+    #[test]
+    fn hotspot_falls_back_to_secondary_index() {
+        let thermals = build_thermals(&[(1, 75 * 256)]);
+        assert_eq!(thermals.hotspot(), Some(75));
+    }
+
+    #[test]
+    fn vram_prefers_primary_index() {
+        let thermals = build_thermals(&[(15, 80 * 256), (7, 70 * 256)]);
+        assert_eq!(thermals.vram(), Some(80));
     }
 }
 
