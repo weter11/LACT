@@ -37,49 +37,6 @@ use anyhow::{bail, Context};
 use lact_schema::RopInfo;
 use nix::ioctl_readwrite;
 
-const NV2080_CTRL_CMD_THERMAL_GET_TEMPERATURES: u32 = 0x20800501;
-const NV2080_CTRL_CMD_THERMAL_GET_THERMAL_SENSORS_INFO: u32 = 0x20800502;
-const NV2080_CTRL_THERMAL_SENSORS_MAX_COUNT: usize = 32;
-
-const NV2080_CTRL_CMD_VOLT_GET_VOLTAGE: u32 = 0x20803201;
-pub const NV2080_CTRL_VOLT_DOMAIN_CORE: u32 = 0x00000000;
-
-pub const NV2080_CTRL_THERMAL_SENSOR_TYPE_GPU: u32 = 0x00000001;
-pub const NV2080_CTRL_THERMAL_SENSOR_TYPE_MEMORY: u32 = 0x00000002;
-
-#[allow(non_snake_case)]
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-struct NV2080_CTRL_THERMAL_GET_TEMPERATURES_PARAMS {
-    mask: u32,
-    temperatures: [i32; NV2080_CTRL_THERMAL_SENSORS_MAX_COUNT],
-}
-
-#[allow(non_snake_case)]
-#[repr(C)]
-#[derive(Debug, Copy, Clone, Default)]
-struct NV2080_CTRL_THERMAL_GET_THERMAL_SENSORS_INFO_PARAMS {
-    sensorCount: u32,
-    sensorInfo: [NV2080_CTRL_THERMAL_SENSOR_INFO; NV2080_CTRL_THERMAL_SENSORS_MAX_COUNT],
-}
-
-#[allow(non_snake_case)]
-#[repr(C)]
-#[derive(Debug, Copy, Clone, Default)]
-struct NV2080_CTRL_THERMAL_SENSOR_INFO {
-    sensorId: u32,
-    sensorType: u32,
-    controllerId: u32,
-}
-
-#[allow(non_snake_case)]
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-struct NV2080_CTRL_VOLT_GET_VOLTAGE_PARAMS {
-    voltDomainId: u32,
-    voltageuV: u32,
-}
-
 pub struct DriverHandle {
     nvidiactl_fd: File,
     #[allow(dead_code)]
@@ -255,44 +212,6 @@ impl DriverHandle {
 
     pub fn get_l2_cache_size(&self) -> anyhow::Result<u32> {
         self.get_fb_info(NV2080_CTRL_FB_INFO_INDEX_L2CACHE_SIZE)
-    }
-
-    pub fn get_thermal_sensors_info(&self) -> anyhow::Result<Vec<(u32, u32)>> {
-        let mut params = NV2080_CTRL_THERMAL_GET_THERMAL_SENSORS_INFO_PARAMS::default();
-        self.query_rm_control(NV2080_CTRL_CMD_THERMAL_GET_THERMAL_SENSORS_INFO, &mut params)?;
-
-        let sensors = params.sensorInfo[..params.sensorCount as usize]
-            .iter()
-            .map(|info| (info.sensorId, info.sensorType))
-            .collect();
-
-        Ok(sensors)
-    }
-
-    pub fn get_voltage(&self, domain_id: u32) -> anyhow::Result<u32> {
-        let mut params = NV2080_CTRL_VOLT_GET_VOLTAGE_PARAMS {
-            voltDomainId: domain_id,
-            voltageuV: 0,
-        };
-        self.query_rm_control(NV2080_CTRL_CMD_VOLT_GET_VOLTAGE, &mut params)?;
-        Ok(params.voltageuV)
-    }
-
-    pub fn get_temperatures(&self, mask: u32) -> anyhow::Result<Vec<(u32, i32)>> {
-        let mut params = NV2080_CTRL_THERMAL_GET_TEMPERATURES_PARAMS {
-            mask,
-            temperatures: [0; NV2080_CTRL_THERMAL_SENSORS_MAX_COUNT],
-        };
-        self.query_rm_control(NV2080_CTRL_CMD_THERMAL_GET_TEMPERATURES, &mut params)?;
-
-        let mut results = Vec::new();
-        for i in 0..NV2080_CTRL_THERMAL_SENSORS_MAX_COUNT {
-            if (mask & (1 << i)) != 0 {
-                results.push((i as u32, params.temperatures[i]));
-            }
-        }
-
-        Ok(results)
     }
 
     fn get_fb_info(&self, stat_index: u32) -> anyhow::Result<u32> {

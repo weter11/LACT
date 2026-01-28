@@ -31,6 +31,8 @@ use tokio::{sync::Notify, task::JoinHandle};
 use tracing::{error, warn};
 
 #[cfg(feature = "nvidia")]
+pub use nvidia::nvapi::NvApi;
+#[cfg(feature = "nvidia")]
 use nvml_wrapper::Nvml;
 
 pub type DynGpuController = Box<dyn GpuController>;
@@ -131,7 +133,7 @@ pub struct PciSlotInfo {
 }
 
 #[cfg(feature = "nvidia")]
-pub type NvidiaLibs = Arc<Nvml>;
+pub type NvidiaLibs = (Arc<Nvml>, Arc<Option<NvApi>>);
 #[cfg(not(feature = "nvidia"))]
 pub type NvidiaLibs = ();
 
@@ -229,8 +231,8 @@ pub(crate) fn init_controller(
         }
         #[cfg(feature = "nvidia")]
         "nvidia" => {
-            if let Some(nvml) = NVML.as_ref() {
-                match NvidiaGpuController::new(common.clone(), nvml) {
+            if let Some((nvml, nvapi)) = NVML.as_ref() {
+                match NvidiaGpuController::new(common.clone(), nvml, nvapi.as_ref().as_ref()) {
                     Ok(controller) => {
                         return Ok(Box::new(controller));
                     }
