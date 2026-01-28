@@ -30,6 +30,14 @@
 #define NVAPI_MAX_PHYSICAL_GPUS 64
 #define NVAPI_THERMAL_VALUES 40
 
+// Version constants for NVAPI structures
+#define NVAPI_THERMALS_VERSION 2
+#define NVAPI_VOLTAGE_VERSION 1
+
+// Thermal sensor indices
+#define THERMAL_INDEX_HOTSPOT 9
+#define THERMAL_INDEX_MEMORY 15
+
 // Type definitions based on NVAPI
 typedef int NvAPI_Status;
 typedef struct NvPhysicalGpuHandle__ { int unused; } *NvPhysicalGpuHandle;
@@ -136,7 +144,7 @@ int get_thermals(NvPhysicalGpuHandle handle, NvApiThermals *sensors) {
     }
 
     memset(sensors, 0, sizeof(NvApiThermals));
-    sensors->version = (sizeof(NvApiThermals) | (2 << 16));
+    sensors->version = (sizeof(NvApiThermals) | (NVAPI_THERMALS_VERSION << 16));
     sensors->mask = 1;
 
     NvAPI_Status status = get_thermals_fn(handle, sensors);
@@ -158,7 +166,7 @@ int get_voltage(NvPhysicalGpuHandle handle, uint32_t *voltage_uv) {
 
     NvApiVoltage data;
     memset(&data, 0, sizeof(NvApiVoltage));
-    data.version = (sizeof(NvApiVoltage) | (1 << 16));
+    data.version = (sizeof(NvApiVoltage) | (NVAPI_VOLTAGE_VERSION << 16));
     data.flags = 0;
 
     NvAPI_Status status = get_voltage_fn(handle, &data);
@@ -180,7 +188,7 @@ int get_temp_value(NvApiThermals *sensors, int index) {
     int value = sensors->values[index] / 256;
     
     // Filter invalid values
-    if (value <= 0 || value >= 255) {
+    if (value <= 0 || value > 255) {
         return -1;
     }
     
@@ -233,7 +241,7 @@ int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
         // Get voltage
         uint32_t voltage_uv = 0;
         if (get_voltage(handles[i], &voltage_uv) == 0) {
-            printf("  Core Voltage: %.3f V (%.0f µV)\n", voltage_uv / 1000000.0, (double)voltage_uv);
+            printf("  Core Voltage: %.3f V (%u µV)\n", voltage_uv / 1000000.0, voltage_uv);
         } else {
             printf("  Core Voltage: Not available\n");
         }
@@ -241,16 +249,16 @@ int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
         // Get thermal sensors
         NvApiThermals sensors;
         if (get_thermals(handles[i], &sensors) == 0) {
-            // Hotspot temperature (index 9)
-            int hotspot_temp = get_temp_value(&sensors, 9);
+            // Hotspot temperature
+            int hotspot_temp = get_temp_value(&sensors, THERMAL_INDEX_HOTSPOT);
             if (hotspot_temp > 0) {
                 printf("  Hotspot Temperature: %d °C\n", hotspot_temp);
             } else {
                 printf("  Hotspot Temperature: Not available\n");
             }
 
-            // Memory temperature (index 15)
-            int memory_temp = get_temp_value(&sensors, 15);
+            // Memory temperature
+            int memory_temp = get_temp_value(&sensors, THERMAL_INDEX_MEMORY);
             if (memory_temp > 0) {
                 printf("  Memory Temperature: %d °C\n", memory_temp);
             } else {
