@@ -259,6 +259,12 @@ mod tests {
     }
 
     #[test]
+    fn hotspot_prefers_primary_index() {
+        let thermals = build_thermals(&[(9, 85 * 256), (1, 70 * 256)]);
+        assert_eq!(thermals.hotspot(), Some(85));
+    }
+
+    #[test]
     fn hotspot_falls_back_to_secondary_index() {
         let thermals = build_thermals(&[(1, 75 * 256)]);
         assert_eq!(thermals.hotspot(), Some(75));
@@ -268,6 +274,12 @@ mod tests {
     fn vram_prefers_primary_index() {
         let thermals = build_thermals(&[(15, 80 * 256), (7, 70 * 256)]);
         assert_eq!(thermals.vram(), Some(80));
+    }
+
+    #[test]
+    fn vram_falls_back_to_secondary_index() {
+        let thermals = build_thermals(&[(7, 65 * 256), (2, 60 * 256)]);
+        assert_eq!(thermals.vram(), Some(65));
     }
 }
 
