@@ -19,6 +19,9 @@
 #define QUERY_NVAPI_GET_ERROR_MESSAGE 0x6c2d048c
 #define QUERY_NVAPI_THERMALS 0x65fe3aad
 #define QUERY_NVAPI_VOLTAGE 0x465f9bcf
+#define NVAPI_THERMALS_VALUE_COUNT 40
+#define NVAPI_THERMALS_HOTSPOT_INDEX 9
+#define NVAPI_THERMALS_VRAM_INDEX 15
 
 typedef void *(*NvAPI_QueryInterfaceFn)(NvU32 id);
 typedef NvAPI_Status (*NvAPI_InitializeFn)(void);
@@ -32,7 +35,8 @@ typedef NvAPI_Status (*NvAPI_GetErrorMessageFn)(NvAPI_Status status,
 typedef struct NvApiThermals {
     NvU32 version;
     NvS32 mask;
-    NvS32 values[40];
+    /* NvAPI thermals values: hotspot index 9, VRAM index 15. */
+    NvS32 values[NVAPI_THERMALS_VALUE_COUNT];
 } NvApiThermals;
 
 typedef NvAPI_Status (*NvAPI_GetThermalsFn)(NvPhysicalGpuHandle handle,
@@ -48,6 +52,8 @@ typedef struct NvApiVoltage {
 
 typedef NvAPI_Status (*NvAPI_GetVoltageFn)(NvPhysicalGpuHandle handle,
                                            NvApiVoltage *voltage);
+
+_Static_assert(sizeof(NvApiVoltage) == 76, "NvApiVoltage must match NvAPI layout");
 
 static void *load_symbol(void *library, const char *symbol) {
     void *result = NULL;
@@ -119,20 +125,23 @@ static NvS32 calculate_thermals_mask(NvAPI_GetThermalsFn get_thermals,
     thermals.version = MAKE_NVAPI_VERSION(NvApiThermals, 2);
     thermals.mask = 1;
 
+    /* Initial probe to ensure the call succeeds before iterating masks. */
     status = get_thermals(handle, &thermals);
     if (!check_nvapi_status(status, get_error_message, "NvAPI_GetThermals (mask probe)")) {
         return 0;
     }
 
     for (int bit = 0; bit < 32; ++bit) {
-        thermals.mask = 1 << bit;
+        NvU32 bit_mask = 1u << bit;
+
+        thermals.mask = (NvS32)bit_mask;
         status = get_thermals(handle, &thermals);
         if (status != NVAPI_OK) {
-            return thermals.mask - 1;
+            return (NvS32)(bit_mask - 1u);
         }
     }
 
-    return 0;
+    return (NvS32)~0u;
 }
 
 int main(void) {
@@ -216,8 +225,10 @@ int main(void) {
             thermals.mask = thermals_mask;
             status = get_thermals(handles[0], &thermals);
             if (check_nvapi_status(status, get_error_message, "NvAPI_GetThermals")) {
-                has_hotspot = read_temp_value(&thermals, 9, &hotspot_temp);
-                has_memory = read_temp_value(&thermals, 15, &memory_temp);
+                has_hotspot =
+                    read_temp_value(&thermals, NVAPI_THERMALS_HOTSPOT_INDEX, &hotspot_temp);
+                has_memory =
+                    read_temp_value(&thermals, NVAPI_THERMALS_VRAM_INDEX, &memory_temp);
             }
         }
     }
